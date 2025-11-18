@@ -1,0 +1,49 @@
+# Edge Metrics Exporter Configuration (Local Fallback)
+#
+# This file is used when the central Config API server is unavailable.
+# Minimal configuration to keep the exporter running.
+
+# Device type - determines which collector to use
+# Options: jetson_orin, jetson_xavier, raspberry_pi, orange_pi, lattepanda, shelly
+device_type: "jetson_orin"
+
+# Metric collection interval in seconds
+interval: 1
+
+# Prometheus metrics HTTP server port
+port: 9100
+
+# Management API HTTP server port (reload and metrics config)
+reload_port: 9101
+
+# Metrics configuration (true: collect, false: don't collect)
+# New metrics discovered by the collector are automatically added with false (disabled)
+# You can enable/disable metrics via:
+#   - Editing this file and reloading: POST http://localhost:9101/reload
+#   - Using the API: POST http://localhost:9101/metrics/enable
+#     Example: curl -X POST http://localhost:9101/metrics/enable \
+#              -H "Content-Type: application/json" \
+#              -d '{"jetson_power_vdd_gpu_soc_watts": true, "jetson_temp_cpu_celsius": true}'
+#
+# To view all available metrics: GET http://localhost:9101/metrics/list
+#
+# Example metrics configuration:
+metrics:
+  jetson_power_vdd_gpu_soc_watts: true
+  jetson_power_vdd_cpu_cv_watts: true
+  jetson_temp_cpu_celsius: true
+  jetson_temp_gpu_celsius: false
+  jetson_ram_used_mb: false
+  jetson_ram_used_percent: true
+
+# Device-specific options (currently unused, for future expansion)
+# jetson:
+#   use_tegrastats: true
+#
+# shelly:
+#   host: "192.168.1.100"
+#   switch_id: 0
+#
+# ina260:
+#   i2c_address: 0x40
+#

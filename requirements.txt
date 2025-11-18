@@ -1,0 +1,10 @@
+# Power Exporter Dependencies
+
+# Prometheus client library for metrics exposition
+prometheus-client>=0.19.0
+
+# YAML parser for local config file
+PyYAML>=6.0
+
+# HTTP client for central Config API server
+requests>=2.31.0
