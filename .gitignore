@@ -132,6 +132,7 @@ dmypy.json
 
 # Claude Code
 .claude/
+CLAUDE.md
 
 # Project specific
 config.yaml
