@@ -15,6 +15,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Lock
 from typing import Dict
+from datetime import datetime
 
 from prometheus_client import Gauge, start_http_server
 
@@ -27,6 +28,11 @@ current_config = None
 current_collector = None
 gauges = {}
 reload_flag = False
+
+# Health check state
+start_time = None
+last_collection_time = None
+last_collection_error = None
 
 # Thread-safety locks
 config_lock = Lock()
@@ -206,6 +212,8 @@ class CombinedHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/metrics/list':
             MetricsConfigHandler.do_GET(self)
+        elif self.path == '/health':
+            self._handle_health()
         else:
             self.send_response(404)
             self.send_header('Content-Type', 'text/plain')
@@ -223,6 +231,56 @@ class CombinedHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'Not Found\n')
 
+    def _handle_health(self):
+        """Handle GET /health endpoint for device status"""
+        global current_config, start_time, last_collection_time, last_collection_error
+
+        try:
+            import json
+
+            with config_lock:
+                device_id = socket.gethostname()
+                device_type = current_config.get("device_type", "unknown")
+                metrics_config = current_config.get("metrics", {})
+
+            # Calculate uptime
+            uptime_seconds = 0
+            if start_time:
+                uptime_seconds = int((datetime.now() - start_time).total_seconds())
+
+            # Count metrics
+            total_metrics = len(metrics_config)
+            enabled_metrics = sum(1 for enabled in metrics_config.values() if enabled)
+
+            # Determine status
+            if last_collection_error:
+                status = "degraded"
+            elif last_collection_time:
+                status = "healthy"
+            else:
+                status = "starting"
+
+            # Build response
+            response = {
+                "status": status,
+                "device_id": device_id,
+                "device_type": device_type,
+                "uptime_seconds": uptime_seconds,
+                "last_collection": last_collection_time.isoformat() if last_collection_time else None,
+                "last_error": last_collection_error,
+                "metrics_count": total_metrics,
+                "enabled_metrics": enabled_metrics
+            }
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response, indent=2).encode())
+
+        except Exception as e:
+            logger.error(f"Error handling /health: {e}")
+            self.send_error(500, f"Internal server error: {e}")
+
     def log_message(self, format, *args):
         """Suppress default HTTP request logs"""
         pass
@@ -239,6 +297,7 @@ def start_reload_server(port: int):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     logger.info(f"🔄 Management API started on :{port}")
+    logger.info(f"   - GET  :{port}/health - Health check status")
     logger.info(f"   - POST :{port}/reload - Trigger config reload")
     logger.info(f"   - GET  :{port}/metrics/list - List all metrics")
     logger.info(f"   - POST :{port}/metrics/enable - Enable/disable metrics")
@@ -478,8 +537,10 @@ def update_metrics_registry(
 def main():
     """Main exporter loop"""
     global current_config, current_collector, gauges, reload_flag
+    global start_time, last_collection_time, last_collection_error
 
     logger.info("🚀 Power Exporter starting...")
+    start_time = datetime.now()
 
     # Load initial configuration
     loader = ConfigLoader()
@@ -526,6 +587,13 @@ def main():
 
         # Collect metrics first
         metrics = current_collector.safe_get_metrics()
+
+        # Update health check state
+        if metrics:
+            last_collection_time = datetime.now()
+            last_collection_error = None
+        else:
+            last_collection_error = "No metrics collected"
 
         # Update metrics registry (discover new metrics)
         if metrics:
