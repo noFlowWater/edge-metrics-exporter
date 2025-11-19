@@ -60,6 +60,11 @@ class ConfigLoader:
         try:
             config = self._load_local_config()
             self.logger.info("✅ Loaded local fallback config")
+
+            # 3. Register device to server (non-blocking)
+            self.logger.info("📤 Registering device to server...")
+            self.sync_to_server(config)
+
             return config
         except Exception as e:
             self.logger.error(f"❌ Failed to load local config: {e}")
