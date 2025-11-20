@@ -21,9 +21,18 @@ def get_collector(device_type: str, config: Dict) -> BaseCollector:
     """
     device_type = device_type.lower()
 
-    if device_type in ["jetson_orin", "jetson_xavier", "jetson"]:
-        from .jetson import JetsonCollector
-        return JetsonCollector(config)
+    if device_type == "jetson_orin":
+        from .jetson_orin import JetsonOrinCollector
+        return JetsonOrinCollector(config)
+
+    elif device_type == "jetson_xavier":
+        from .jetson_xavier import JetsonXavierCollector
+        return JetsonXavierCollector(config)
+
+    elif device_type == "jetson":
+        # Generic fallback - defaults to Orin
+        from .jetson_orin import JetsonOrinCollector
+        return JetsonOrinCollector(config)
 
     elif device_type == "raspberry_pi":
         from .raspberry_pi import RaspberryPiCollector
