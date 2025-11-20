@@ -10,6 +10,7 @@ The exporter supports multiple Jetson device types with device-specific metric p
 |-------------|--------------|-----------------|-------------|
 | Jetson Orin | `jetson_orin` | `JetsonOrinCollector` | NVIDIA Jetson Orin devices |
 | Jetson Xavier | `jetson_xavier` | `JetsonXavierCollector` | NVIDIA Jetson Xavier devices |
+| Jetson Nano | `jetson_nano` | `JetsonNanoCollector` | NVIDIA Jetson Nano devices |
 | Generic Jetson | `jetson` | `JetsonOrinCollector` (fallback) | Generic fallback, uses Orin parsing |
 
 #### Architecture
@@ -27,12 +28,16 @@ JetsonOrinCollector(JetsonCollector)
 
 JetsonXavierCollector(JetsonCollector)
   └─ _parse_all_metrics()    # Xavier-specific parsing
+
+JetsonNanoCollector(JetsonCollector)
+  └─ _parse_all_metrics()    # Nano-specific parsing
 ```
 
 **Implementation:**
 - [collectors/jetson.py](collectors/jetson.py) - Base class with common tegrastats execution
 - [collectors/jetson_orin.py](collectors/jetson_orin.py) - Orin-specific parsing
 - [collectors/jetson_xavier.py](collectors/jetson_xavier.py) - Xavier-specific parsing
+- [collectors/jetson_nano.py](collectors/jetson_nano.py) - Nano-specific parsing
 - [collectors/__init__.py](collectors/__init__.py) - Factory pattern for collector selection
 
 #### Device-Specific Differences
@@ -61,11 +66,28 @@ AUX@39C CPU@39.5C AO@37.5C GPU@37.5C PMIC@50C
 VDD_IN 5079mW/5079mW VDD_CPU_GPU_CV 696mW/696mW VDD_SOC 1104mW/1104mW
 ```
 
+##### Jetson Nano
+- **CPU Cores:** 4 cores (typically 2 active + 2 off)
+- **Power Rails:** POM_5V_IN, POM_5V_GPU, POM_5V_CPU (Power Optimization Module)
+- **Temperature Sensors:** PLL, CPU, PMIC, GPU, AO, thermal
+- **GPU:** Single frequency WITHOUT brackets (GR3D_FREQ 0%@76)
+- **IRAM:** Internal RAM metric (unique to Nano)
+- **SWAP:** Includes cached memory info
+- **File:** [collectors/jetson_nano.py](collectors/jetson_nano.py)
+
+**Example tegrastats output:**
+```
+RAM 1409/3964MB (lfb 28x4MB) SWAP 0/1982MB (cached 0MB) IRAM 0/252kB(lfb 252kB)
+CPU [22%@518,67%@518,off,off] EMC_FREQ 0%@1600 GR3D_FREQ 0%@76 APE 25
+PLL@28.5C CPU@32C PMIC@50C GPU@30.5C AO@39.5C thermal@31.25C
+POM_5V_IN 2003/2003 POM_5V_GPU 0/0 POM_5V_CPU 320/320
+```
+
 #### Configuration
 
 ```yaml
 # config.yaml
-device_type: jetson_orin    # or jetson_xavier, or jetson
+device_type: jetson_orin    # or jetson_xavier, jetson_nano, or jetson
 interval: 1
 port: 9100
 reload_port: 9101
@@ -92,6 +114,7 @@ All Jetson devices (Orin and Xavier) support these metric categories:
 
 **Orin Rails:** `vdd_gpu_soc`, `vdd_cpu_cv`, `vddq_vdd2_1v8ao`, `vin_sys_5v0`
 **Xavier Rails:** `vdd_in`, `vdd_cpu_gpu_cv`, `vdd_soc`
+**Nano Rails:** `pom_5v_in`, `pom_5v_gpu`, `pom_5v_cpu`
 
 #### Temperature Metrics
 | Metric Pattern | Description | Unit | Example |
@@ -100,6 +123,7 @@ All Jetson devices (Orin and Xavier) support these metric categories:
 
 **Orin Sensors:** `cpu`, `gpu`, `soc0`, `soc1`, `soc2`, `tboard`, `tdiode`, `tj`
 **Xavier Sensors:** `aux`, `cpu`, `ao`, `gpu`, `pmic`
+**Nano Sensors:** `pll`, `cpu`, `pmic`, `gpu`, `ao`, `thermal`
 
 #### Memory Metrics
 | Metric | Description | Unit |
@@ -109,9 +133,13 @@ All Jetson devices (Orin and Xavier) support these metric categories:
 | `jetson_ram_used_percent` | RAM usage | Percent |
 | `jetson_swap_used_mb` | SWAP usage | MB |
 | `jetson_swap_total_mb` | Total SWAP | MB |
-| `jetson_swap_cached_mb` | Cached SWAP (Xavier only) | MB |
+| `jetson_swap_cached_mb` | Cached SWAP (Xavier/Nano) | MB |
 | `jetson_lfb_blocks` | Largest free block count | Count |
 | `jetson_lfb_total_mb` | Total LFB size | MB |
+| `jetson_iram_used_kb` | Internal RAM usage (Nano only) | KB |
+| `jetson_iram_total_kb` | Total internal RAM (Nano only) | KB |
+| `jetson_iram_used_percent` | Internal RAM usage (Nano only) | Percent |
+| `jetson_iram_lfb_kb` | Internal RAM LFB (Nano only) | KB |
 
 #### CPU Metrics
 | Metric Pattern | Description | Unit | Notes |
@@ -124,6 +152,7 @@ All Jetson devices (Orin and Xavier) support these metric categories:
 
 **Orin:** 8 cores (core0-core7)
 **Xavier:** 6 cores (core0-core5, typically 4 active + 2 off)
+**Nano:** 4 cores (core0-core3, typically 2 active + 2 off)
 
 #### GPU Metrics
 | Metric | Description | Unit | Notes |
@@ -132,14 +161,15 @@ All Jetson devices (Orin and Xavier) support these metric categories:
 | `jetson_gpu_freq{N}_mhz` | GPU frequency | MHz | N=0-1 for Orin |
 
 **Orin:** 2 GPU frequency clusters (freq0, freq1) - GR3D_FREQ 0%@[611,0]
-**Xavier:** 1 GPU frequency cluster (freq0) - GR3D_FREQ 0%@[510]
+**Xavier:** 1 GPU frequency cluster (freq0) in brackets - GR3D_FREQ 0%@[510]
+**Nano:** 1 GPU frequency (freq0) WITHOUT brackets - GR3D_FREQ 0%@76
 
 #### Other Metrics
 | Metric | Description | Unit |
 |--------|-------------|------|
 | `jetson_emc_usage_percent` | Memory controller usage | Percent |
 | `jetson_emc_freq_mhz` | Memory controller frequency | MHz |
-| `jetson_vic_freq_mhz` | Video compositor frequency | MHz |
+| `jetson_vic_freq_mhz` | Video compositor frequency (Orin/Xavier only) | MHz |
 | `jetson_ape_freq_mhz` | Audio engine frequency | MHz |
 
 ### Metric Labels
@@ -294,6 +324,26 @@ metrics:
   jetson_temp_aux_celsius: true                # Xavier-specific sensor
   jetson_cpu_avg_usage_percent: true
   jetson_swap_cached_mb: true                  # Xavier-specific
+```
+
+### Configure for Jetson Nano
+
+```yaml
+# config.yaml
+device_type: jetson_nano
+interval: 1
+port: 9100
+reload_port: 9101
+
+metrics:
+  jetson_power_pom_5v_in_watts: true           # Nano-specific rail
+  jetson_power_pom_5v_cpu_watts: true          # Nano-specific rail
+  jetson_power_pom_5v_gpu_watts: true          # Nano-specific rail
+  jetson_temp_cpu_celsius: true
+  jetson_temp_thermal_celsius: true            # Nano-specific sensor
+  jetson_cpu_avg_usage_percent: true
+  jetson_iram_used_percent: true               # Nano-specific (Internal RAM)
+  jetson_swap_cached_mb: true                  # Nano-specific
 ```
 
 ### Query Metrics via API

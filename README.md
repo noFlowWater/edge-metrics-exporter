@@ -4,7 +4,7 @@ Prometheus exporter for edge device power consumption monitoring.
 
 ## Features
 
-- ✅ **Multiple Device Support**: Jetson Orin/Xavier, Raspberry Pi, Orange Pi, LattePanda, Shelly smart plugs
+- ✅ **Multiple Device Support**: Jetson Orin/Xavier/Nano, Raspberry Pi, Orange Pi, LattePanda, Shelly smart plugs
 - 🔄 **Dynamic Config Reload**: Update configuration without restarting the service
 - 🌐 **Central Config Server**: Manage all device configurations from one place (with bidirectional sync)
 - 💾 **Local Fallback**: Continue operating with local config if central server is unavailable
@@ -18,7 +18,7 @@ Prometheus exporter for edge device power consumption monitoring.
 
 | Device | Status | Method |
 |--------|--------|--------|
-| Jetson Orin/Xavier | ✅ **Implemented** | tegrastats |
+| Jetson Orin/Xavier/Nano | ✅ **Implemented** | tegrastats |
 | Raspberry Pi | 💤 TODO | INA260 I2C |
 | Orange Pi | 💤 TODO | sysfs |
 | LattePanda | 💤 TODO | RAPL |
