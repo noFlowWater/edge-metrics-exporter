@@ -165,7 +165,8 @@ class JetsonNanoCollector(JetsonCollector):
         # 9. GPU frequency: GR3D_FREQ 0%@76
         #    Nano uses SINGLE frequency WITHOUT brackets
         #    Different from Xavier (GR3D_FREQ 0%@[510]) and Orin (GR3D_FREQ 0%@[611,0])
-        gpu_match = re.search(r'GR3D_FREQ\s+(\d+)%@(\d+)(?!\])', output)
+        #    Match format: number NOT followed by opening bracket
+        gpu_match = re.search(r'GR3D_FREQ\s+(\d+)%@(\d+)(?!\[)', output)
         if gpu_match:
             usage = int(gpu_match.group(1))
             freq_mhz = int(gpu_match.group(2))
