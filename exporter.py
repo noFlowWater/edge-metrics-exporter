@@ -438,6 +438,11 @@ def apply_new_config(new_config: dict):
     # Apply new config
     with config_lock:
         current_config = new_config
+
+    # Save to local config file
+    if config_loader_instance:
+        config_loader_instance.save_to_local(new_config)
+
     logger.info("✅ Configuration updated")
 
 

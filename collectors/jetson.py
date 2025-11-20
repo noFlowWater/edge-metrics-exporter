@@ -78,9 +78,15 @@ class JetsonCollector(BaseCollector):
             self.logger.error(f"Failed to collect Jetson metrics: {e}")
             raise
         finally:
-            # Cleanup: terminate process
+            # Cleanup: close pipes and terminate process
             if process:
                 try:
+                    # Close pipes first to prevent file handle leaks
+                    if process.stdout:
+                        process.stdout.close()
+                    if process.stderr:
+                        process.stderr.close()
+
                     process.terminate()
                     try:
                         process.wait(timeout=1)
