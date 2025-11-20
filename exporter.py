@@ -16,7 +16,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Lock
 from datetime import datetime
 
-from prometheus_client import REGISTRY, start_http_server
+from prometheus_client import REGISTRY, start_http_server, PROCESS_COLLECTOR, PLATFORM_COLLECTOR, GC_COLLECTOR
 from prometheus_client.core import GaugeMetricFamily
 
 from config_loader import ConfigLoader
@@ -461,6 +461,15 @@ def main():
 
     # Initialize collector
     current_collector = initialize_collector(current_config)
+
+    # Remove default Python/process collectors
+    try:
+        REGISTRY.unregister(PROCESS_COLLECTOR)
+        REGISTRY.unregister(PLATFORM_COLLECTOR)
+        REGISTRY.unregister(GC_COLLECTOR)
+        logger.info("✅ Default Python/process collectors removed")
+    except Exception as e:
+        logger.warning(f"⚠️  Could not unregister default collectors: {e}")
 
     # Register custom collector for on-demand metrics
     REGISTRY.register(OnDemandCollector())
