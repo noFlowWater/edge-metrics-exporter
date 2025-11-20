@@ -44,6 +44,21 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
     sed -i "s|Environment=\"CONFIG_SERVER_URL=.*\"|Environment=\"CONFIG_SERVER_URL=$CONFIG_SERVER_URL\"|g" $SERVICE_FILE
 
+    # Configure sudoers for tegrastats (Jetson devices)
+    if command -v tegrastats &> /dev/null; then
+        echo "🔑 Configuring passwordless sudo for tegrastats..."
+        CURRENT_USER=${USER}
+        SUDOERS_FILE="/etc/sudoers.d/tegrastats-${CURRENT_USER}"
+
+        # Create sudoers entry
+        echo "${CURRENT_USER} ALL=(ALL) NOPASSWD: /usr/bin/tegrastats" | $SUDO tee $SUDOERS_FILE > /dev/null
+        $SUDO chmod 0440 $SUDOERS_FILE
+
+        echo "✅ Sudoers configured: ${CURRENT_USER} can run tegrastats without password"
+    else
+        echo "ℹ️  tegrastats not found - skipping sudoers configuration (not a Jetson device?)"
+    fi
+
     # Copy service file
     echo "📋 Installing systemd service..."
     $SUDO cp $SERVICE_FILE /etc/systemd/system/

@@ -42,7 +42,18 @@ else
     echo "ℹ️  No systemd service found"
 fi
 
-# 2. Kill any running exporter processes
+# 2. Remove sudoers configuration for tegrastats
+CURRENT_USER=${USER}
+SUDOERS_FILE="/etc/sudoers.d/tegrastats-${CURRENT_USER}"
+if [ -f "$SUDOERS_FILE" ]; then
+    echo "🔑 Removing sudoers configuration for tegrastats..."
+    $SUDO rm -f "$SUDOERS_FILE"
+    echo "✅ Sudoers configuration removed"
+else
+    echo "ℹ️  No sudoers configuration found"
+fi
+
+# 3. Kill any running exporter processes
 if pgrep -f "python3.*exporter.py" > /dev/null; then
     echo "🛑 Stopping running exporter processes..."
     $SUDO pkill -f "python3.*exporter.py" || true

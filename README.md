@@ -96,10 +96,16 @@ curl http://localhost:9100/metrics
 
 ### 4. Install as Systemd Service
 
-**Option A: Automatic Installation**
+**Option A: Automatic Installation (Recommended)**
 ```bash
 ./install.sh
 ```
+
+**What it does:**
+- Installs Python dependencies
+- Configures sudoers for passwordless tegrastats access (Jetson only)
+- Updates service file with current paths
+- Installs and enables systemd service
 
 **Option B: Manual Installation**
 ```bash
@@ -109,6 +115,11 @@ cp edge-metrics-exporter.service.template edge-metrics-exporter.service
 # Edit the service file with your environment-specific values
 # Replace placeholders: {{USER}}, {{WORKING_DIRECTORY}}, {{CONFIG_SERVER_URL}}, etc.
 nano edge-metrics-exporter.service
+
+# Configure sudoers for tegrastats (Jetson only)
+# This allows running tegrastats without password prompt
+echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/tegrastats" | sudo tee /etc/sudoers.d/tegrastats-$USER
+sudo chmod 0440 /etc/sudoers.d/tegrastats-$USER
 
 # Copy service file
 sudo cp edge-metrics-exporter.service /etc/systemd/system/
@@ -127,10 +138,16 @@ sudo journalctl -u edge-metrics-exporter -f
 
 ### 5. Uninstall
 
-**Option A: Automatic Uninstallation**
+**Option A: Automatic Uninstallation (Recommended)**
 ```bash
 ./uninstall.sh
 ```
+
+**What it does:**
+- Stops and disables systemd service
+- Removes service file
+- Removes sudoers configuration
+- Kills any running exporter processes
 
 **Option B: Manual Uninstallation**
 ```bash
@@ -141,6 +158,9 @@ sudo systemctl disable edge-metrics-exporter
 # Remove service file
 sudo rm /etc/systemd/system/edge-metrics-exporter.service
 sudo systemctl daemon-reload
+
+# Remove sudoers configuration
+sudo rm /etc/sudoers.d/tegrastats-$USER
 ```
 
 ## Configuration
@@ -362,6 +382,26 @@ sudo journalctl -u edge-metrics-exporter -n 50
 # Test manually
 cd /home/orin/ETRI/edge-metrics-exporter
 python3 exporter.py
+```
+
+### tegrastats permission denied (Jetson)
+
+If you see authentication errors in logs:
+```
+pam_unix(sudo:auth): conversation failed
+pam_unix(sudo:auth): auth could not identify password for [user]
+tegrastats returned empty output
+```
+
+**Solution:** Run install.sh to configure sudoers automatically, or manually:
+
+```bash
+# Allow current user to run tegrastats without password
+echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/tegrastats" | sudo tee /etc/sudoers.d/tegrastats-$USER
+sudo chmod 0440 /etc/sudoers.d/tegrastats-$USER
+
+# Restart service
+sudo systemctl restart edge-metrics-exporter
 ```
 
 ### tegrastats not found (Jetson)
