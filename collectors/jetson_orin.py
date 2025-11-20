@@ -33,7 +33,7 @@ class JetsonOrinCollector(JetsonCollector):
 
         # 1. Power rails: VDD_GPU_SOC 3176mW/3176mW or VDD_GPU_SOC 3176mW
         #    NC (not connected) rails will be skipped
-        power_pattern = r'(\w+)\s+(\d+)(?:/(\d+))?mW'
+        power_pattern = r'(\w+)\s+(\d+)mW(?:/(\d+)mW)?'
         for match in re.finditer(power_pattern, output):
             rail_name = match.group(1)
             current_mw = float(match.group(2))

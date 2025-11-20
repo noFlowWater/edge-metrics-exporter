@@ -46,10 +46,10 @@ class JetsonNanoCollector(JetsonCollector):
         """
         metrics = {}
 
-        # 1. Power rails: POM_5V_IN 2003/2003 (NOT mW format!)
+        # 1. Power rails: POM_5V_IN 1762/1762 (NOT mW suffix, but values are in mW)
         #    Nano uses POM (Power Optimization Module) rails
-        #    Values appear to be in mW already based on typical readings
-        power_pattern = r'(POM_\w+)\s+(\d+)(?:/(\d+))?'
+        #    Format: POM_5V_IN 1762/1762 (no 'mW' suffix unlike Orin/Xavier)
+        power_pattern = r'(POM_\w+)\s+(\d+)(?:/(\d+))?(?:\s|$)'
         for match in re.finditer(power_pattern, output):
             rail_name = match.group(1)
             current_mw = float(match.group(2))

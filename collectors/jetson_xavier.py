@@ -43,10 +43,10 @@ class JetsonXavierCollector(JetsonCollector):
         """
         metrics = {}
 
-        # 1. Power rails: VDD_GPU_SOC 3176mW/3176mW or VDD_GPU_SOC 3176mW
+        # 1. Power rails: VDD_IN 6635mW/6635mW or VDD_IN 6635mW
+        #    Xavier power rails: VDD_IN, VDD_CPU_GPU_CV, VDD_SOC
         #    NC (not connected) rails will be skipped
-        #    Xavier may have different rail names than Orin
-        power_pattern = r'(\w+)\s+(\d+)(?:/(\d+))?mW'
+        power_pattern = r'(\w+)\s+(\d+)mW(?:/(\d+)mW)?'
         for match in re.finditer(power_pattern, output):
             rail_name = match.group(1)
             current_mw = float(match.group(2))
