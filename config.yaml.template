@@ -11,7 +11,7 @@ device_type: "jetson_orin"
 interval: 1
 
 # Prometheus metrics HTTP server port
-port: 9100
+port: 9102
 
 # Management API HTTP server port (reload and metrics config)
 reload_port: 9101

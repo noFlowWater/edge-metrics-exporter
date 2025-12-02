@@ -100,7 +100,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     # Extract ports from config.yaml
     METRICS_PORT=$(grep -E "^port:\s*[0-9]+" $CURRENT_DIR/config.yaml | awk '{print $2}')
     RELOAD_PORT=$(grep -E "^reload_port:\s*[0-9]+" $CURRENT_DIR/config.yaml | awk '{print $2}')
-    METRICS_PORT=${METRICS_PORT:-9100}
+    METRICS_PORT=${METRICS_PORT:-9102}
     RELOAD_PORT=${RELOAD_PORT:-9101}
 
     # Extract Shelly ports from shelly_server.py or use defaults

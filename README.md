@@ -31,7 +31,7 @@ Prometheus exporter for edge device power consumption monitoring.
  ├─ Config Loader (central API + local fallback + bidirectional sync)
  ├─ Collector (device-specific power reading with auto-discovery)
  └─ Exporter
-     ├─ :9100/metrics (Prometheus)
+     ├─ :9102/metrics (Prometheus)
      └─ :9101 Management API
          ├─ POST /reload (Config reload trigger)
          ├─ GET  /metrics/list (List all metrics and status)
@@ -72,7 +72,7 @@ Edit `config.yaml`:
 ```yaml
 device_type: "jetson_orin"
 interval: 1
-port: 9100
+port: 9102
 reload_port: 9101
 
 # Metrics configuration (true: collect, false: don't collect)
@@ -91,7 +91,7 @@ python3 exporter.py
 
 Check metrics:
 ```bash
-curl http://localhost:9100/metrics
+curl http://localhost:9102/metrics
 ```
 
 ### 4. Install as Systemd Service
@@ -194,7 +194,7 @@ Set in `edge-metrics-exporter.service`:
 ```yaml
 device_type: "jetson_orin"  # Device type
 interval: 1                  # Collection interval (seconds)
-port: 9100                   # Prometheus metrics port
+port: 9102                   # Prometheus metrics port
 reload_port: 9101            # Management API port
 
 # Metrics configuration (true: collect, false: don't collect)
@@ -223,8 +223,8 @@ scrape_configs:
   - job_name: 'edge-power'
     static_configs:
       - targets:
-          - 'edge-01:9100'
-          - 'edge-02:9100'
+          - 'edge-01:9102'
+          - 'edge-02:9102'
     scrape_interval: 5s
 ```
 

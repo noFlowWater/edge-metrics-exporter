@@ -102,7 +102,7 @@ if [ -f "$CURRENT_DIR/config.yaml" ]; then
     METRICS_PORT=$(grep -E "^port:\s*[0-9]+" $CURRENT_DIR/config.yaml | awk '{print $2}')
     RELOAD_PORT=$(grep -E "^reload_port:\s*[0-9]+" $CURRENT_DIR/config.yaml | awk '{print $2}')
 fi
-METRICS_PORT=${METRICS_PORT:-9100}
+METRICS_PORT=${METRICS_PORT:-9102}
 RELOAD_PORT=${RELOAD_PORT:-9101}
 SHELLY_WS_PORT=${SHELLY_WS_PORT:-8765}
 SHELLY_HTTP_PORT=${SHELLY_HTTP_PORT:-8766}

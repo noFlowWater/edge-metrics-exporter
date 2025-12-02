@@ -89,7 +89,7 @@ POM_5V_IN 2003/2003 POM_5V_GPU 0/0 POM_5V_CPU 320/320
 # config.yaml
 device_type: jetson_orin    # or jetson_xavier, jetson_nano, or jetson
 interval: 1
-port: 9100
+port: 9102
 reload_port: 9101
 
 metrics:
@@ -210,7 +210,7 @@ Get full configuration file content.
 {
   "device_type": "jetson_orin",
   "interval": 1,
-  "port": 9100,
+  "port": 9102,
   "reload_port": 9101,
   "shelly": {
     "enabled": true,
@@ -297,7 +297,7 @@ Reload configuration from server or local file.
 
 ### `GET /metrics`
 
-Base URL: `http://localhost:9100/metrics`
+Base URL: `http://localhost:/metrics`
 
 Returns metrics in Prometheus text format.
 
@@ -324,7 +324,7 @@ jetson_cpu_core0_usage_percent{device_type="jetson_orin",hostname="edge-01"} 15.
 # config.yaml
 device_type: jetson_orin
 interval: 1
-port: 9100
+port: 9102
 reload_port: 9101
 
 metrics:
@@ -340,7 +340,7 @@ metrics:
 # config.yaml
 device_type: jetson_xavier
 interval: 1
-port: 9100
+port: 9102
 reload_port: 9101
 
 metrics:
@@ -359,7 +359,7 @@ metrics:
 # config.yaml
 device_type: jetson_nano
 interval: 1
-port: 9100
+port: 9102
 reload_port: 9101
 
 metrics:
@@ -391,7 +391,7 @@ curl -X POST http://localhost:9101/metrics/enable \
 curl -X POST http://localhost:9101/reload
 
 # Get Prometheus metrics
-curl http://localhost:9100/metrics
+curl http://localhost:9102/metrics
 ```
 
 ### Prometheus Configuration
@@ -402,8 +402,8 @@ scrape_configs:
   - job_name: 'jetson-devices'
     static_configs:
       - targets:
-          - 'orin-01:9100'    # Jetson Orin
-          - 'xavier-01:9100'  # Jetson Xavier
+          - 'orin-01:9102'    # Jetson Orin
+          - 'xavier-01:9102'  # Jetson Xavier
     scrape_interval: 5s
 ```
 
@@ -765,7 +765,7 @@ The Shelly metrics are automatically exposed alongside device-specific metrics.
 scrape_configs:
   - job_name: 'edge-devices'
     static_configs:
-      - targets: ['orin-01:9100']
+      - targets: ['orin-01:9102']
     scrape_interval: 5s
 ```
 

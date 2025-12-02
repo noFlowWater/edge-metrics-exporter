@@ -534,7 +534,7 @@ def main():
     logger.info("✅ On-demand collector registered")
 
     # Start Prometheus HTTP server
-    metrics_port = current_config.get("port", 9100)
+    metrics_port = current_config.get("port", 9102)
     start_http_server(metrics_port)
     logger.info(f"📊 Prometheus metrics endpoint started on :{metrics_port}/metrics")
 
