@@ -13,62 +13,50 @@ from aiohttp import web
 import websockets
 
 
-class ShellyMetricsCache:
+class ShellyConnectionRegistry:
     """
-    메트릭 캐시 (Thread-safe)
-    각 디바이스의 최신 메트릭을 메모리에 저장
+    WebSocket 연결 레지스트리 (Thread-safe)
+    각 디바이스의 WebSocket 연결을 추적
     """
 
     def __init__(self):
-        self.devices = {}  # {device_id: {"metrics": {...}, "timestamp": float}}
+        self.connections = {}  # {device_id: websocket}
         self.lock = Lock()
-        self.logger = logging.getLogger("ShellyMetricsCache")
+        self.logger = logging.getLogger("ShellyConnectionRegistry")
 
-    def update(self, device_id: str, metrics: dict):
-        """메트릭 업데이트 (thread-safe)"""
+    def register(self, device_id: str, websocket):
+        """연결 등록 (thread-safe)"""
         with self.lock:
-            self.devices[device_id] = {
-                "metrics": metrics,
-                "timestamp": time.time()
-            }
-            self.logger.debug(f"Updated metrics for {device_id}: {metrics}")
+            self.connections[device_id] = websocket
+            self.logger.info(f"Registered device: {device_id}")
 
-    def get(self, device_id: str) -> dict:
-        """메트릭 조회 (thread-safe)"""
+    def unregister(self, device_id: str):
+        """연결 해제 (thread-safe)"""
         with self.lock:
-            device_data = self.devices.get(device_id)
+            if device_id in self.connections:
+                del self.connections[device_id]
+                self.logger.info(f"Unregistered device: {device_id}")
 
-            if not device_data:
-                return {}
-
-            # Check if metrics are stale (older than 60 seconds)
-            age = time.time() - device_data["timestamp"]
-            if age > 60:
-                self.logger.warning(f"Metrics for {device_id} are stale ({age:.1f}s old)")
-
-            return device_data.get("metrics", {})
+    def get_connection(self, device_id: str):
+        """WebSocket 연결 조회 (thread-safe)"""
+        with self.lock:
+            return self.connections.get(device_id)
 
     def get_all_devices(self) -> list:
         """디바이스 목록 조회 (thread-safe)"""
         with self.lock:
-            return list(self.devices.keys())
-
-    def remove(self, device_id: str):
-        """디바이스 제거 (thread-safe)"""
-        with self.lock:
-            if device_id in self.devices:
-                del self.devices[device_id]
-                self.logger.info(f"Removed device: {device_id}")
+            return list(self.connections.keys())
 
 
 class ShellyWebSocketHandler:
     """
     WebSocket 연결 처리
-    Shelly 플러그의 Outbound WebSocket 연결을 처리하고 RPC 메시지 파싱
+    Shelly 플러그의 Outbound WebSocket 연결을 처리하고 RPC 요청/응답 처리
     """
 
-    def __init__(self, cache: ShellyMetricsCache):
-        self.cache = cache
+    def __init__(self, registry: ShellyConnectionRegistry):
+        self.registry = registry
+        self.pending_requests = {}  # {request_id: asyncio.Future}
         self.logger = logging.getLogger("ShellyWebSocketHandler")
 
     async def handle_connection(self, websocket, path):
@@ -94,16 +82,18 @@ class ShellyWebSocketHandler:
                     if not data:
                         continue
 
-                    # 디바이스 ID 추출 (첫 메시지에서)
+                    # 디바이스 ID 추출 및 등록 (첫 메시지에서)
                     if not device_id:
                         device_id = self._extract_device_id(data, remote_addr)
                         if device_id:
-                            self.logger.info(f"Device identified: {device_id}")
+                            self.registry.register(device_id, websocket)
+                            self.logger.info(f"Device identified and registered: {device_id}")
 
-                    # 메트릭 추출 및 저장
-                    metrics = self._extract_metrics(data)
-                    if metrics and device_id:
-                        self.cache.update(device_id, metrics)
+                    # RPC 응답 디스패치
+                    if self.dispatch_rpc_response(data):
+                        continue
+
+                    # Push notifications 무시 (NotifyStatus, NotifyFullStatus, etc.)
 
                 except Exception as e:
                     self.logger.error(f"Error processing message: {e}")
@@ -114,9 +104,9 @@ class ShellyWebSocketHandler:
         except Exception as e:
             self.logger.error(f"WebSocket error: {e}")
         finally:
-            # 연결 종료 시 디바이스 제거
+            # 연결 종료 시 디바이스 등록 해제
             if device_id:
-                self.cache.remove(device_id)
+                self.registry.unregister(device_id)
 
     def _parse_rpc_message(self, message: str) -> dict:
         """
@@ -152,45 +142,183 @@ class ShellyWebSocketHandler:
         # Fallback: use remote IP address
         return f"shelly_{remote_addr[0].replace('.', '_')}"
 
-    def _extract_metrics(self, data: dict) -> dict:
+    async def send_rpc_request(self, websocket, method: str, params: dict = None):
         """
-        RPC 메시지에서 전력 메트릭 추출
-        NotifyFullStatus, NotifyStatus, NotifyEvent 메시지 처리
+        RPC 요청 전송 및 응답 대기
 
         Args:
-            data: 파싱된 RPC 메시지
+            websocket: WebSocket 연결 객체
+            method: RPC 메서드 이름 (예: "Switch.GetStatus")
+            params: RPC 파라미터 (예: {"id": 0})
 
         Returns:
-            메트릭 딕셔너리 {power_total_watts, power_voltage_volts, power_current_amps}
+            RPC 응답 메시지
+
+        Raises:
+            Exception: RPC 타임아웃 또는 전송 실패
+        """
+        import uuid
+
+        request_id = str(uuid.uuid4())
+        request = {
+            "id": request_id,
+            "method": method,
+            "params": params or {}
+        }
+
+        # Create Future for response
+        future = asyncio.Future()
+        self.pending_requests[request_id] = future
+
+        try:
+            # Send RPC request
+            await websocket.send(json.dumps(request))
+            self.logger.debug(f"Sent RPC request: {method} (id: {request_id})")
+
+            # Wait for response with 5s timeout
+            response = await asyncio.wait_for(future, timeout=5.0)
+            self.logger.debug(f"Received RPC response (id: {request_id})")
+            return response
+
+        except asyncio.TimeoutError:
+            self.logger.error(f"RPC request timeout: {method} (id: {request_id})")
+            raise Exception("RPC request timeout")
+        finally:
+            self.pending_requests.pop(request_id, None)
+
+    def dispatch_rpc_response(self, message: dict) -> bool:
+        """
+        RPC 응답을 대기 중인 요청으로 라우팅
+
+        Args:
+            message: 수신된 RPC 메시지
+
+        Returns:
+            True if message was an RPC response, False otherwise
+        """
+        if "id" in message and message["id"] in self.pending_requests:
+            future = self.pending_requests[message["id"]]
+            if not future.done():
+                future.set_result(message)
+                self.logger.debug(f"Dispatched RPC response (id: {message['id']})")
+            return True
+        return False
+
+    def _extract_metrics_from_rpc_result(self, result: dict) -> dict:
+        """
+        Switch.GetStatus RPC 결과에서 모든 메트릭 추출
+
+        Args:
+            result: RPC response의 "result" 필드
+
+        Returns:
+            메트릭 딕셔너리 (모든 Shelly Switch 메트릭 포함, shelly_ prefix)
         """
         metrics = {}
 
         try:
-            method = data.get("method", "")
-            params = data.get("params", {})
+            # Switch output state (boolean → 1/0)
+            # output: true if the output channel is currently on, false otherwise
+            if "output" in result:
+                metrics["shelly_power_switch_output"] = 1 if result["output"] else 0
 
-            # Look for switch:0 data (Shelly plugs use switch:0)
-            switch_data = None
+            # Instantaneous active power (Watts)
+            # apower: Last measured instantaneous active power delivered to the attached load
+            if "apower" in result:
+                metrics["shelly_power_total_watts"] = float(result["apower"])
 
-            if "switch:0" in params:
-                switch_data = params["switch:0"]
-            elif isinstance(params, dict):
-                # Sometimes params directly contain the metrics
-                switch_data = params
+            # Supply voltage (Volts)
+            # voltage: Last measured voltage
+            if "voltage" in result:
+                metrics["shelly_power_voltage_volts"] = float(result["voltage"])
 
-            if switch_data and isinstance(switch_data, dict):
-                # Extract power metrics
-                if "apower" in switch_data:
-                    metrics["power_total_watts"] = float(switch_data["apower"])
+            # Current (Amperes)
+            # current: Last measured current
+            if "current" in result:
+                metrics["shelly_power_current_amps"] = float(result["current"])
 
-                if "voltage" in switch_data:
-                    metrics["power_voltage_volts"] = float(switch_data["voltage"])
+            # Power factor
+            # pf: Last measured power factor
+            if "pf" in result:
+                metrics["shelly_power_factor"] = float(result["pf"])
 
-                if "current" in switch_data:
-                    metrics["power_current_amps"] = float(switch_data["current"])
+            # Network frequency (Hz)
+            # freq: Last measured network frequency
+            if "freq" in result:
+                metrics["shelly_power_frequency_hz"] = float(result["freq"])
+
+            # Active energy counter (Watt-hours)
+            # aenergy: Information about the active energy counter
+            if "aenergy" in result and isinstance(result["aenergy"], dict):
+                aenergy = result["aenergy"]
+
+                # Total consumed energy (Watt-hours)
+                # total: Total energy consumed
+                if "total" in aenergy:
+                    metrics["shelly_energy_total_wh"] = float(aenergy["total"])
+
+                # Energy by minute (Milliwatt-hours for last 3 complete minutes)
+                # by_minute: Total energy flow for the last three complete minutes
+                # The 0-th element indicates counts during the minute preceding minute_ts
+                if "by_minute" in aenergy and isinstance(aenergy["by_minute"], list):
+                    for i, value in enumerate(aenergy["by_minute"][:3]):
+                        metrics[f"shelly_energy_minute_{i}_mwh"] = float(value)
+
+                # Timestamp of current minute start (Unix timestamp in UTC)
+                # minute_ts: Unix timestamp marking the start of the current minute
+                if "minute_ts" in aenergy:
+                    metrics["shelly_energy_minute_timestamp"] = int(aenergy["minute_ts"])
+
+            # Returned active energy counter (Watt-hours)
+            # ret_aenergy: Information about the returned active energy counter
+            # Note: Returned energy is also added to aenergy container
+            if "ret_aenergy" in result and isinstance(result["ret_aenergy"], dict):
+                ret_aenergy = result["ret_aenergy"]
+
+                # Total returned energy (Watt-hours)
+                # total: Total returned energy consumed
+                if "total" in ret_aenergy:
+                    metrics["shelly_energy_returned_total_wh"] = float(ret_aenergy["total"])
+
+                # Returned energy by minute (Milliwatt-hours for last 3 complete minutes)
+                # by_minute: Returned energy for the last three complete minutes
+                if "by_minute" in ret_aenergy and isinstance(ret_aenergy["by_minute"], list):
+                    for i, value in enumerate(ret_aenergy["by_minute"][:3]):
+                        metrics[f"shelly_energy_returned_minute_{i}_mwh"] = float(value)
+
+                # Timestamp of current minute start (Unix timestamp in UTC)
+                # minute_ts: Unix timestamp marking the start of the current minute
+                if "minute_ts" in ret_aenergy:
+                    metrics["shelly_energy_returned_minute_timestamp"] = int(ret_aenergy["minute_ts"])
+
+            # Temperature measurements
+            # temperature: Information about the temperature (if applicable)
+            if "temperature" in result and isinstance(result["temperature"], dict):
+                temp = result["temperature"]
+
+                # Temperature in Celsius (null if out of measurement range)
+                # tC: Temperature in Celsius
+                if "tC" in temp and temp["tC"] is not None:
+                    metrics["shelly_temperature_celsius"] = float(temp["tC"])
+
+                # Temperature in Fahrenheit (null if out of measurement range)
+                # tF: Temperature in Fahrenheit
+                if "tF" in temp and temp["tF"] is not None:
+                    metrics["shelly_temperature_fahrenheit"] = float(temp["tF"])
+
+            # Error conditions
+            # errors: Error conditions occurred (overtemp, overpower, overvoltage, undervoltage)
+            if "errors" in result and isinstance(result["errors"], list):
+                # Number of active errors
+                metrics["shelly_errors_count"] = len(result["errors"])
+
+                # Individual error flags
+                error_types = ["overtemp", "overpower", "overvoltage", "undervoltage"]
+                for error_type in error_types:
+                    metrics[f"shelly_error_{error_type}"] = 1 if error_type in result["errors"] else 0
 
         except Exception as e:
-            self.logger.error(f"Error extracting metrics: {e}")
+            self.logger.error(f"Error extracting metrics from RPC result: {e}")
 
         return metrics
 
@@ -198,47 +326,75 @@ class ShellyWebSocketHandler:
 class ShellyHTTPHandler:
     """
     HTTP API 처리
-    ShellyCollector가 메트릭을 조회할 수 있는 HTTP API 제공
+    ShellyCollector가 메트릭을 조회할 수 있는 HTTP API 제공 (RPC 방식)
     """
 
-    def __init__(self, cache: ShellyMetricsCache):
-        self.cache = cache
+    def __init__(self, registry: ShellyConnectionRegistry, ws_handler: ShellyWebSocketHandler):
+        self.registry = registry
+        self.ws_handler = ws_handler
         self.logger = logging.getLogger("ShellyHTTPHandler")
 
     async def handle_metrics(self, request):
         """
         GET /metrics
-        현재 연결된 유일한 디바이스의 메트릭 반환 (1:1:1 관계)
+        현재 연결된 유일한 디바이스의 메트릭 반환 (On-demand RPC 방식)
 
         동작:
         - Shelly plug 연결 전: 404 (No Shelly device connected)
-        - Shelly plug 연결 후: 메트릭 반환
+        - Shelly plug 연결 후: RPC로 실시간 메트릭 조회
 
         Returns:
             JSON 응답
         """
-        devices = self.cache.get_all_devices()
+        try:
+            devices = self.registry.get_all_devices()
 
-        if not devices:
-            return web.json_response(
-                {"error": "No Shelly device connected"},
-                status=404
+            if not devices:
+                return web.json_response(
+                    {"error": "No Shelly device connected"},
+                    status=404
+                )
+
+            # 첫 번째 (유일한) 디바이스 선택
+            device_id = devices[0]
+            websocket = self.registry.get_connection(device_id)
+
+            if not websocket:
+                return web.json_response(
+                    {"error": "Device connection lost"},
+                    status=502
+                )
+
+            # RPC 요청 전송: Switch.GetStatus
+            response = await self.ws_handler.send_rpc_request(
+                websocket,
+                method="Switch.GetStatus",
+                params={"id": 0}
             )
 
-        # 첫 번째 (유일한) 디바이스의 메트릭 반환
-        device_id = devices[0]
-        metrics = self.cache.get(device_id)
+            # RPC 응답에서 메트릭 추출
+            if "result" in response:
+                metrics = self.ws_handler._extract_metrics_from_rpc_result(response["result"])
 
-        if not metrics:
+                return web.json_response({
+                    "device_id": device_id,
+                    "metrics": metrics,
+                    "timestamp": time.time()
+                })
+            else:
+                raise Exception("Invalid RPC response")
+
+        except asyncio.TimeoutError:
             return web.json_response(
-                {"error": "No metrics available"},
-                status=404
+                {"error": "RPC request timeout"},
+                status=504
             )
-
-        return web.json_response({
-            "device_id": device_id,
-            "metrics": metrics
-        })
+        except Exception as e:
+            self.logger.error(f"Error getting metrics: {e}")
+            return web.json_response(
+                {"error": str(e)},
+                status=500
+            )
 
     async def handle_devices(self, request):
         """
@@ -248,7 +404,7 @@ class ShellyHTTPHandler:
         Returns:
             JSON 응답
         """
-        devices = self.cache.get_all_devices()
+        devices = self.registry.get_all_devices()
 
         return web.json_response({
             "devices": devices,
@@ -266,12 +422,12 @@ class ShellyServer:
         self.ws_port = ws_port
         self.http_port = http_port
 
-        # 공유 메트릭 캐시
-        self.cache = ShellyMetricsCache()
+        # 공유 연결 레지스트리
+        self.registry = ShellyConnectionRegistry()
 
         # 핸들러 초기화
-        self.ws_handler = ShellyWebSocketHandler(self.cache)
-        self.http_handler = ShellyHTTPHandler(self.cache)
+        self.ws_handler = ShellyWebSocketHandler(self.registry)
+        self.http_handler = ShellyHTTPHandler(self.registry, self.ws_handler)
 
         self.logger = logging.getLogger("ShellyServer")
 

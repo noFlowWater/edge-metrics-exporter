@@ -523,11 +523,13 @@ The Shelly integration provides **external AC power consumption** metrics for ed
 │   │  shelly_server.py               │  │
 │   │  - WebSocket Server :8765      │  │
 │   │  - HTTP API :8766              │  │
-│   │  - Metrics Cache               │  │
+│   │  - RPC Request Handler         │  │
 │   └────────────────▲───────────────┘  │
 │                    │                   │
 └────────────────────┼───────────────────┘
-                     │ WebSocket (Outbound)
+                     │ WebSocket (Bidirectional)
+                     │ • Push: Notifications
+                     │ • Pull: RPC Requests
             ┌────────┴────────┐
             │  Shelly Plug    │
             │  (Gen2+)        │
@@ -538,7 +540,7 @@ The Shelly integration provides **external AC power consumption** metrics for ed
 
 #### 1. shelly_server.py (Independent Process)
 
-**Purpose:** Maintains WebSocket connections with Shelly plugs and caches real-time metrics.
+**Purpose:** Maintains WebSocket connections with Shelly plugs and provides on-demand RPC-based metrics.
 
 **Ports:**
 - WebSocket Server: `8765` (receives Shelly plug connections)
@@ -546,9 +548,9 @@ The Shelly integration provides **external AC power consumption** metrics for ed
 
 **Features:**
 - Async WebSocket server (websockets library)
-- JSON-RPC message parsing
-- Thread-safe metrics cache
-- HTTP API for metric retrieval
+- Bidirectional JSON-RPC communication (requests & responses)
+- Thread-safe connection registry
+- On-demand metric retrieval via RPC (no caching)
 
 **Running:**
 ```bash
@@ -637,34 +639,70 @@ curl "http://192.168.1.100/rpc/Ws.GetStatus"
 curl "http://localhost:8766/devices"
 # Expected: {"devices": ["orin-device-01"], "count": 1}
 
-# Check metrics
-curl "http://localhost:8766/metrics/orin-device-01"
-# Expected: {"device_id": "orin-device-01", "metrics": {"power_total_watts": 45.3, ...}}
+# Check metrics (on-demand RPC)
+curl "http://localhost:8766/metrics"
+# Expected: {"device_id": "shellyplus1pm-...", "metrics": {"power_total_watts": 45.3, ...}, "timestamp": ...}
 ```
 
 ### shelly_server HTTP API
 
 Base URL: `http://localhost:8766`
 
-#### `GET /metrics/{device_id}`
+#### `GET /metrics`
 
-Get latest metrics for a specific device.
+Get real-time metrics via on-demand RPC request to the connected Shelly device.
 
-**Response:**
+**How it works:**
+1. HTTP request arrives at shelly_server
+2. Server sends `Switch.GetStatus` RPC request to Shelly plug via WebSocket
+3. Shelly plug responds with current measurements
+4. Server extracts metrics and returns to caller
+
+**RPC Request (Internal, sent to Shelly):**
 ```json
 {
-  "device_id": "orin-device-01",
-  "metrics": {
-    "power_total_watts": 45.3,
-    "power_voltage_volts": 220.5,
-    "power_current_amps": 0.205
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "Switch.GetStatus",
+  "params": {"id": 0}
+}
+```
+
+**RPC Response (from Shelly):**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "src": "shellyplus1pm-441793ce3f08",
+  "result": {
+    "id": 0,
+    "source": "WS_in",
+    "output": false,
+    "apower": 45.3,
+    "voltage": 220.5,
+    "current": 0.205,
+    "freq": 50,
+    "temperature": {"tC": 53.3, "tF": 127.9}
   }
 }
 ```
 
+**HTTP Response:**
+```json
+{
+  "device_id": "shellyplus1pm-441793ce3f08",
+  "metrics": {
+    "power_total_watts": 45.3,
+    "power_voltage_volts": 220.5,
+    "power_current_amps": 0.205
+  },
+  "timestamp": 1733140800.123
+}
+```
+
 **Errors:**
-- `404`: Device not found (not connected to shelly_server)
-- `500`: Server error
+- `404`: No Shelly device connected
+- `502`: Device connection lost
+- `504`: RPC request timeout (5 seconds)
+- `500`: Server error or invalid RPC response
 
 #### `GET /devices`
 
@@ -817,19 +855,21 @@ curl -X POST http://localhost:9101/metrics/enable \
   -d '{"power_total_watts": true, "power_voltage_volts": true, "power_current_amps": true}'
 ```
 
-#### Stale Metrics Warning
+#### RPC Timeout Errors
 
-If you see "Metrics are stale" in logs, the Shelly plug hasn't sent updates for >60 seconds.
+If you see "RPC request timeout" (HTTP 504) when requesting metrics, the Shelly plug didn't respond within 5 seconds.
 
 **Possible causes:**
-- Shelly plug lost power
-- Network connectivity issues
+- Shelly plug lost power or network connection
 - WebSocket connection dropped
+- Shelly plug is overloaded or unresponsive
 
 **Solution:**
-- Check Shelly plug power/network
-- Restart shelly_server: `sudo systemctl restart shelly-server`
-- Shelly plug will automatically reconnect
+- Check Shelly plug power/network status
+- Verify WebSocket connection: `curl http://localhost:8766/devices`
+- Check shelly_server logs: `sudo journalctl -u shelly-server -n 50`
+- Restart shelly_server if needed: `sudo systemctl restart shelly-server`
+- Shelly plug will automatically reconnect when available
 
 ### RPC Message Format
 
