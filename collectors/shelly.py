@@ -2,7 +2,6 @@
 Shelly smart plug collector.
 Fetches power metrics from shelly_server via HTTP API.
 """
-import socket
 from typing import Dict, List
 import requests
 from .base import BaseCollector
@@ -26,12 +25,8 @@ class ShellyCollector(BaseCollector):
         shelly_config = config.get("shelly", {})
         self.server_url = shelly_config.get("server_url", "http://localhost:8766")
 
-        # Device ID (defaults to hostname)
-        self.device_id = shelly_config.get("device_id") or socket.gethostname()
-
         self.logger.info(f"Shelly collector initialized")
         self.logger.info(f"  Server URL: {self.server_url}")
-        self.logger.info(f"  Device ID: {self.device_id}")
 
     @classmethod
     def metric_names(cls) -> List[str]:
@@ -49,14 +44,14 @@ class ShellyCollector(BaseCollector):
 
     def get_metrics(self) -> Dict[str, float]:
         """
-        Fetch power metrics from shelly_server (1:1:1 관계, device_id 불필요).
+        Fetch power metrics from shelly_server.
 
         Returns:
             Dictionary of metrics {metric_name: value}
             Returns empty dict if metrics unavailable
         """
         try:
-            # HTTP GET to shelly_server (device_id 없이)
+            # HTTP GET to shelly_server
             url = f"{self.server_url}/metrics"
             response = requests.get(url, timeout=2)
 

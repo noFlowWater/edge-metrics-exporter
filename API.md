@@ -214,8 +214,7 @@ Get full configuration file content.
   "reload_port": 9101,
   "shelly": {
     "enabled": true,
-    "server_url": "http://localhost:8766",
-    "device_id": "orin-device-01"
+    "server_url": "http://localhost:8766"
   },
   "metrics": {
     "jetson_power_vdd_gpu_soc_watts": true,
@@ -291,6 +290,30 @@ Reload configuration from server or local file.
   "source": "local",
   "metrics_count": 45
 }
+```
+
+**What Gets Reloaded:**
+
+✅ **Automatically Applied:**
+- `device_type` - Collectors are reinitialized
+- `metrics` - Metric enable/disable settings
+- `shelly` settings - ShellyCollector is reinitialized if any shelly config changes
+  - `enabled` - Enable/disable Shelly collector
+  - `server_url` - Shelly server API URL
+
+❌ **Requires Service Restart:**
+- `port` - Prometheus metrics port (requires restart)
+- `reload_port` - Management API port (requires restart)
+
+If you change `port` or `reload_port`, you will see a warning log message:
+```
+⚠️  Port change detected (9102 → 9103) but cannot be applied.
+Please restart the service: sudo systemctl restart edge-metrics-exporter
+```
+
+**Restart Command:**
+```bash
+sudo systemctl restart edge-metrics-exporter
 ```
 
 ## Prometheus Metrics Endpoint
@@ -585,7 +608,6 @@ device_type: jetson_orin  # Device-specific collector
 shelly:
   enabled: true                        # Enable/disable Shelly collector
   server_url: "http://localhost:8766"  # shelly_server HTTP API
-  device_id: "orin-device-01"          # Device identifier (defaults to hostname)
 
 metrics:
   # Device metrics
@@ -603,7 +625,6 @@ metrics:
 |-------|------|---------|-------------|
 | `shelly.enabled` | boolean | `true` | Enable Shelly collector |
 | `shelly.server_url` | string | `http://localhost:8766` | shelly_server API URL |
-| `shelly.device_id` | string | hostname | Device identifier for metrics |
 
 ### Shelly Plug Setup
 

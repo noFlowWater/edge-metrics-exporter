@@ -463,11 +463,30 @@ def apply_new_config(new_config: dict):
     old_device_type = current_config.get("device_type")
     new_device_type = new_config.get("device_type")
 
-    # If device type changed, reinitialize collectors
+    old_shelly_config = current_config.get("shelly", {})
+    new_shelly_config = new_config.get("shelly", {})
+
+    # Check if collectors need reinitialization
+    need_reinit = False
+    reinit_reason = []
+
+    # 1. Device type changed
     if old_device_type != new_device_type:
-        logger.info(
-            f"Device type changed: {old_device_type} → {new_device_type}"
-        )
+        need_reinit = True
+        reinit_reason.append(f"device_type: {old_device_type} → {new_device_type}")
+
+    # 2. Shelly configuration changed
+    if old_shelly_config != new_shelly_config:
+        need_reinit = True
+        # Log specific shelly config changes
+        if old_shelly_config.get("enabled") != new_shelly_config.get("enabled"):
+            reinit_reason.append(f"shelly.enabled: {old_shelly_config.get('enabled')} → {new_shelly_config.get('enabled')}")
+        if old_shelly_config.get("server_url") != new_shelly_config.get("server_url"):
+            reinit_reason.append(f"shelly.server_url changed")
+
+    # Reinitialize collectors if needed
+    if need_reinit:
+        logger.info(f"Configuration changes detected: {', '.join(reinit_reason)}")
         logger.info("Reinitializing collectors...")
 
         try:
@@ -492,6 +511,23 @@ def apply_new_config(new_config: dict):
         logger.info(f"Metrics enabled: {added}")
     if removed:
         logger.info(f"Metrics disabled: {removed}")
+
+    # Check for port changes (cannot be applied without restart)
+    old_port = current_config.get("port")
+    new_port = new_config.get("port")
+    old_reload_port = current_config.get("reload_port")
+    new_reload_port = new_config.get("reload_port")
+
+    if old_port != new_port:
+        logger.warning(
+            f"⚠️  Port change detected ({old_port} → {new_port}) but cannot be applied. "
+            f"Please restart the service: sudo systemctl restart edge-metrics-exporter"
+        )
+    if old_reload_port != new_reload_port:
+        logger.warning(
+            f"⚠️  Reload port change detected ({old_reload_port} → {new_reload_port}) but cannot be applied. "
+            f"Please restart the service: sudo systemctl restart edge-metrics-exporter"
+        )
 
     # Apply new config
     with config_lock:
