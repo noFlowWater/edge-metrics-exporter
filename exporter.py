@@ -25,7 +25,7 @@ from collectors import get_collector, BaseCollector
 
 # Global state
 current_config = None
-current_collector = None
+current_collectors = []  # Changed to list to support multiple collectors
 config_loader_instance = None
 reload_flag = False
 
@@ -49,31 +49,43 @@ class OnDemandCollector:
 
     def collect(self):
         """Called by Prometheus when scraping /metrics"""
-        global current_config, current_collector, last_collection_time, last_collection_error
+        global current_config, current_collectors, last_collection_time, last_collection_error
         global config_loader_instance
 
-        if not current_collector or not current_config:
+        if not current_collectors or not current_config:
             return
 
-        try:
-            # Collect metrics from hardware
-            metrics = current_collector.safe_get_metrics()
+        # Get config once
+        with config_lock:
+            metrics_config = current_config.get("metrics", {})
+            device_type = current_config.get("device_type", "unknown")
 
-            if not metrics:
-                last_collection_error = "No metrics collected"
+        try:
+            # Collect metrics from ALL collectors
+            all_metrics = {}
+
+            for collector in current_collectors:
+                try:
+                    metrics = collector.safe_get_metrics()
+
+                    if metrics:
+                        all_metrics.update(metrics)
+
+                except Exception as e:
+                    logger.error(f"❌ Collector {collector.__class__.__name__} failed: {e}")
+                    continue
+
+            if not all_metrics:
+                last_collection_error = "No metrics collected from any collector"
                 return
 
             # Update health check state
             last_collection_time = datetime.now()
             last_collection_error = None
 
-            # Get config
+            # Auto-discover new metrics
             with config_lock:
-                metrics_config = current_config.get("metrics", {})
-                device_type = current_config.get("device_type", "unknown")
-
-                # Auto-discover new metrics
-                current_metric_names = set(metrics.keys())
+                current_metric_names = set(all_metrics.keys())
                 registered_metric_names = set(metrics_config.keys())
                 new_metrics = current_metric_names - registered_metric_names
 
@@ -90,7 +102,7 @@ class OnDemandCollector:
                             config_loader_instance.sync_to_server(current_config)
 
             # Yield metrics for enabled ones only
-            for name, value in metrics.items():
+            for name, value in all_metrics.items():
                 enabled = metrics_config.get(name, False)
 
                 if enabled:
@@ -282,6 +294,8 @@ class CombinedHandler(BaseHTTPRequestHandler):
             MetricsConfigHandler.do_GET(self)
         elif self.path == '/health':
             self._handle_health()
+        elif self.path == '/config':
+            self._handle_config()
         else:
             self.send_response(404)
             self.send_header('Content-Type', 'text/plain')
@@ -349,6 +363,25 @@ class CombinedHandler(BaseHTTPRequestHandler):
             logger.error(f"Error handling /health: {e}")
             self.send_error(500, f"Internal server error: {e}")
 
+    def _handle_config(self):
+        """Handle GET /config endpoint for full configuration"""
+        global current_config
+
+        try:
+            import json
+
+            with config_lock:
+                config_copy = current_config.copy()
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(config_copy, indent=2).encode())
+
+        except Exception as e:
+            logger.error(f"Error handling /config: {e}")
+            self.send_error(500, f"Internal server error: {e}")
+
     def log_message(self, format, *args):
         """Suppress default HTTP request logs"""
         pass
@@ -366,58 +399,83 @@ def start_reload_server(port: int):
     thread.start()
     logger.info(f"🔄 Management API started on :{port}")
     logger.info(f"   - GET  :{port}/health - Health check status")
+    logger.info(f"   - GET  :{port}/config - Get full configuration")
     logger.info(f"   - POST :{port}/reload - Trigger config reload")
     logger.info(f"   - GET  :{port}/metrics/list - List all metrics")
     logger.info(f"   - POST :{port}/metrics/enable - Enable/disable metrics")
 
 
-def initialize_collector(config: dict) -> BaseCollector:
+def initialize_collectors(config: dict) -> list:
     """
-    Initialize collector based on config.
+    Initialize all collectors for this device.
+
+    Always includes:
+    1. Device-specific collector (Jetson, Raspberry Pi, etc.)
+    2. ShellyCollector (if shelly config exists and enabled)
 
     Args:
         config: Configuration dictionary
 
     Returns:
-        Initialized collector instance
+        List of initialized collector instances
     """
+    collectors = []
     device_type = config["device_type"]
+
+    # 1. Initialize device-specific collector
     logger.info(f"Initializing collector for device type: {device_type}")
 
     try:
-        collector = get_collector(device_type, config)
-        logger.info(f"✅ Collector initialized: {collector.__class__.__name__}")
-        return collector
+        device_collector = get_collector(device_type, config)
+        collectors.append(device_collector)
+        logger.info(f"✅ Device collector initialized: {device_collector.__class__.__name__}")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize collector: {e}")
+        logger.error(f"❌ Failed to initialize device collector: {e}")
         raise
+
+    # 2. Initialize Shelly collector (optional)
+    shelly_config = config.get("shelly", {})
+    shelly_enabled = shelly_config.get("enabled", True)  # Default: enabled
+
+    if shelly_enabled:
+        try:
+            from collectors.shelly import ShellyCollector
+            shelly_collector = ShellyCollector(config)
+            collectors.append(shelly_collector)
+            logger.info(f"✅ Shelly collector initialized")
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to initialize Shelly collector: {e}")
+            logger.warning(f"   Continuing without Shelly metrics")
+
+    logger.info(f"Total collectors initialized: {len(collectors)}")
+    return collectors
 
 
 def apply_new_config(new_config: dict):
     """
-    Apply new configuration and reinitialize collector if needed.
+    Apply new configuration and reinitialize collectors if needed.
 
     Args:
         new_config: New configuration dictionary
     """
-    global current_config, current_collector
+    global current_config, current_collectors
 
     old_device_type = current_config.get("device_type")
     new_device_type = new_config.get("device_type")
 
-    # If device type changed, reinitialize collector
+    # If device type changed, reinitialize collectors
     if old_device_type != new_device_type:
         logger.info(
             f"Device type changed: {old_device_type} → {new_device_type}"
         )
-        logger.info("Reinitializing collector...")
+        logger.info("Reinitializing collectors...")
 
         try:
-            current_collector = initialize_collector(new_config)
-            logger.info("✅ Collector reinitialized successfully")
+            current_collectors = initialize_collectors(new_config)
+            logger.info("✅ Collectors reinitialized successfully")
         except Exception as e:
-            logger.error(f"❌ Failed to reinitialize collector: {e}")
-            logger.warning("Keeping old collector")
+            logger.error(f"❌ Failed to reinitialize collectors: {e}")
+            logger.warning("Keeping old collectors")
             return
 
     # Log metrics config changes
@@ -448,7 +506,7 @@ def apply_new_config(new_config: dict):
 
 def main():
     """Main exporter entry point"""
-    global current_config, current_collector, config_loader_instance, reload_flag
+    global current_config, current_collectors, config_loader_instance, reload_flag
     global start_time
 
     logger.info("🚀 Power Exporter starting...")
@@ -459,8 +517,8 @@ def main():
     current_config = config_loader_instance.load()
     logger.info(f"Configuration: {current_config}")
 
-    # Initialize collector
-    current_collector = initialize_collector(current_config)
+    # Initialize collectors (device + shelly)
+    current_collectors = initialize_collectors(current_config)
 
     # Remove default Python/process collectors
     try:

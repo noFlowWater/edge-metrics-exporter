@@ -8,3 +8,9 @@ PyYAML>=6.0
 
 # HTTP client for central Config API server
 requests>=2.31.0
+
+# WebSocket server for Shelly plug connections
+websockets>=12.0
+
+# HTTP server for Shelly metrics API
+aiohttp>=3.9.0

@@ -53,15 +53,65 @@ else
     echo "ℹ️  No sudoers configuration found"
 fi
 
-# 3. Kill any running exporter processes
+# 3. Remove shelly-server service if exists
+if [ -f "/etc/systemd/system/shelly-server.service" ]; then
+    echo "📋 Found shelly-server service"
+
+    # Stop service if running
+    if systemctl is-active --quiet shelly-server; then
+        echo "⏹️  Stopping shelly-server service..."
+        $SUDO systemctl stop shelly-server
+    fi
+
+    # Disable service
+    if systemctl is-enabled --quiet shelly-server 2>/dev/null; then
+        echo "🔓 Disabling shelly-server service..."
+        $SUDO systemctl disable shelly-server
+    fi
+
+    # Remove service file
+    echo "🗑️  Removing shelly-server service file..."
+    $SUDO rm -f /etc/systemd/system/shelly-server.service
+
+    # Reload systemd
+    echo "🔄 Reloading systemd daemon..."
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl reset-failed 2>/dev/null || true
+
+    echo "✅ Shelly server service uninstalled"
+else
+    echo "ℹ️  No shelly-server service found"
+fi
+
+# 4. Kill any running processes
 if pgrep -f "python3.*exporter.py" > /dev/null; then
     echo "🛑 Stopping running exporter processes..."
     $SUDO pkill -f "python3.*exporter.py" || true
     sleep 1
 fi
 
+if pgrep -f "python3.*shelly_server.py" > /dev/null; then
+    echo "🛑 Stopping running shelly_server processes..."
+    $SUDO pkill -f "python3.*shelly_server.py" || true
+    sleep 1
+fi
+
+# Extract ports from config.yaml if it exists
+CURRENT_DIR=$(pwd)
+if [ -f "$CURRENT_DIR/config.yaml" ]; then
+    METRICS_PORT=$(grep -E "^port:\s*[0-9]+" $CURRENT_DIR/config.yaml | awk '{print $2}')
+    RELOAD_PORT=$(grep -E "^reload_port:\s*[0-9]+" $CURRENT_DIR/config.yaml | awk '{print $2}')
+fi
+METRICS_PORT=${METRICS_PORT:-9100}
+RELOAD_PORT=${RELOAD_PORT:-9101}
+SHELLY_WS_PORT=${SHELLY_WS_PORT:-8765}
+SHELLY_HTTP_PORT=${SHELLY_HTTP_PORT:-8766}
+
 echo ""
 echo "🔍 Verification:"
 echo "  - Service status: systemctl status edge-metrics-exporter (should show 'not found')"
-echo "  - Port check: netstat -tlnp | grep 9100 (should be empty)"
+echo "  - Service status: systemctl status shelly-server (should show 'not found')"
+echo "  - Port check: netstat -tlnp | grep $METRICS_PORT (should be empty)"
+echo "  - Port check: netstat -tlnp | grep $SHELLY_WS_PORT (should be empty)"
 echo "  - Process check: ps aux | grep exporter.py (should be empty)"
+echo "  - Process check: ps aux | grep shelly_server.py (should be empty)"

@@ -199,6 +199,33 @@ Check exporter health and status.
 }
 ```
 
+### Configuration
+
+#### `GET /config`
+
+Get full configuration file content.
+
+**Response:**
+```json
+{
+  "device_type": "jetson_orin",
+  "interval": 1,
+  "port": 9100,
+  "reload_port": 9101,
+  "shelly": {
+    "enabled": true,
+    "server_url": "http://localhost:8766",
+    "device_id": "orin-device-01"
+  },
+  "metrics": {
+    "jetson_power_vdd_gpu_soc_watts": true,
+    "jetson_power_vdd_cpu_cv_watts": true,
+    "jetson_temp_cpu_celsius": true,
+    "power_total_watts": true
+  }
+}
+```
+
 ### Metrics Management
 
 #### `GET /metrics/list`
@@ -349,6 +376,9 @@ metrics:
 ### Query Metrics via API
 
 ```bash
+# Get full configuration
+curl http://localhost:9101/config
+
 # List all metrics
 curl http://localhost:9101/metrics/list
 
@@ -462,3 +492,403 @@ All Jetson collectors automatically discover available metrics from tegrastats o
 4. Enable via API or config file
 
 This allows the same codebase to work across different Jetson models with varying metric availability.
+
+## Shelly Smart Plug Integration
+
+### Overview
+
+The Shelly integration provides **external AC power consumption** metrics for edge devices through Shelly smart plugs. Each device has a dedicated 1:1 Shelly plug that measures the total power consumption from the wall outlet.
+
+**Key Features:**
+- Real-time power monitoring via WebSocket
+- Independent server process (`shelly_server.py`)
+- Works alongside device-specific collectors (Jetson, Raspberry Pi, etc.)
+- Automatic reconnection and fault tolerance
+
+### Architecture
+
+```
+┌────────────────────────────────────────┐
+│   Edge Device (Jetson Orin)            │
+│                                        │
+│   ┌────────────────────────────────┐  │
+│   │  exporter.py                    │  │
+│   │  - JetsonOrinCollector         │  │
+│   │    (Internal: GPU, CPU, SoC)   │  │
+│   │  - ShellyCollector             │  │
+│   │    (External: AC Power)        │  │
+│   └────────────────┬───────────────┘  │
+│                    │ HTTP GET          │
+│   ┌────────────────▼───────────────┐  │
+│   │  shelly_server.py               │  │
+│   │  - WebSocket Server :8765      │  │
+│   │  - HTTP API :8766              │  │
+│   │  - Metrics Cache               │  │
+│   └────────────────▲───────────────┘  │
+│                    │                   │
+└────────────────────┼───────────────────┘
+                     │ WebSocket (Outbound)
+            ┌────────┴────────┐
+            │  Shelly Plug    │
+            │  (Gen2+)        │
+            └─────────────────┘
+```
+
+### Components
+
+#### 1. shelly_server.py (Independent Process)
+
+**Purpose:** Maintains WebSocket connections with Shelly plugs and caches real-time metrics.
+
+**Ports:**
+- WebSocket Server: `8765` (receives Shelly plug connections)
+- HTTP API: `8766` (provides metrics to ShellyCollector)
+
+**Features:**
+- Async WebSocket server (websockets library)
+- JSON-RPC message parsing
+- Thread-safe metrics cache
+- HTTP API for metric retrieval
+
+**Running:**
+```bash
+# Standalone
+python3 shelly_server.py
+
+# As systemd service
+sudo systemctl start shelly-server
+sudo systemctl status shelly-server
+sudo journalctl -u shelly-server -f
+```
+
+#### 2. ShellyCollector
+
+**Purpose:** Fetches metrics from shelly_server and exposes them to Prometheus.
+
+**Implementation:** HTTP client that queries shelly_server's API.
+
+**Metrics:**
+- `power_total_watts` - Total AC power consumption (W)
+- `power_voltage_volts` - AC voltage (V)
+- `power_current_amps` - AC current (A)
+
+### Configuration
+
+#### config.yaml
+
+```yaml
+device_type: jetson_orin  # Device-specific collector
+
+# Shelly configuration (optional)
+shelly:
+  enabled: true                        # Enable/disable Shelly collector
+  server_url: "http://localhost:8766"  # shelly_server HTTP API
+  device_id: "orin-device-01"          # Device identifier (defaults to hostname)
+
+metrics:
+  # Device metrics
+  jetson_power_vdd_gpu_soc_watts: true
+  jetson_temp_cpu_celsius: true
+
+  # Shelly metrics
+  power_total_watts: true
+  power_voltage_volts: true
+  power_current_amps: true
+```
+
+**Configuration Options:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `shelly.enabled` | boolean | `true` | Enable Shelly collector |
+| `shelly.server_url` | string | `http://localhost:8766` | shelly_server API URL |
+| `shelly.device_id` | string | hostname | Device identifier for metrics |
+
+### Shelly Plug Setup
+
+#### Requirements
+- Shelly Plug Gen2+ (with Outbound WebSocket support)
+- Network connectivity between Shelly plug and edge device
+
+#### Configuration Steps
+
+**1. Configure Shelly Plug WebSocket:**
+
+```bash
+# Replace 192.168.1.100 with your Shelly plug IP
+# Replace orin-device-01 with your edge device hostname/IP
+curl "http://192.168.1.100/rpc/Ws.SetConfig" \
+  -d '{
+    "config": {
+      "enable": true,
+      "server": "ws://orin-device-01:8765",
+      "ssl_ca": "*"
+    }
+  }'
+```
+
+**2. Verify Connection:**
+
+```bash
+# Check Shelly plug connection status
+curl "http://192.168.1.100/rpc/Ws.GetStatus"
+# Expected: {"connected": true}
+
+# Check shelly_server devices
+curl "http://localhost:8766/devices"
+# Expected: {"devices": ["orin-device-01"], "count": 1}
+
+# Check metrics
+curl "http://localhost:8766/metrics/orin-device-01"
+# Expected: {"device_id": "orin-device-01", "metrics": {"power_total_watts": 45.3, ...}}
+```
+
+### shelly_server HTTP API
+
+Base URL: `http://localhost:8766`
+
+#### `GET /metrics/{device_id}`
+
+Get latest metrics for a specific device.
+
+**Response:**
+```json
+{
+  "device_id": "orin-device-01",
+  "metrics": {
+    "power_total_watts": 45.3,
+    "power_voltage_volts": 220.5,
+    "power_current_amps": 0.205
+  }
+}
+```
+
+**Errors:**
+- `404`: Device not found (not connected to shelly_server)
+- `500`: Server error
+
+#### `GET /devices`
+
+List all connected devices.
+
+**Response:**
+```json
+{
+  "devices": ["orin-device-01", "xavier-device-02"],
+  "count": 2
+}
+```
+
+### Deployment
+
+#### Installation
+
+```bash
+# Install dependencies
+pip3 install -r requirements.txt
+
+# Run installation script
+./install.sh
+# Choose "y" for shelly-server service when prompted
+```
+
+#### Manual Start
+
+```bash
+# Terminal 1: Start shelly_server
+python3 shelly_server.py
+
+# Terminal 2: Start exporter
+python3 exporter.py
+```
+
+#### Systemd Services
+
+```bash
+# Start services
+sudo systemctl start shelly-server
+sudo systemctl start edge-metrics-exporter
+
+# Check status
+sudo systemctl status shelly-server
+sudo systemctl status edge-metrics-exporter
+
+# View logs
+sudo journalctl -u shelly-server -f
+sudo journalctl -u edge-metrics-exporter -f
+```
+
+### Prometheus Integration
+
+The Shelly metrics are automatically exposed alongside device-specific metrics.
+
+**Scrape Configuration:**
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'edge-devices'
+    static_configs:
+      - targets: ['orin-01:9100']
+    scrape_interval: 5s
+```
+
+**Metrics Output:**
+```
+# Device metrics (internal power)
+jetson_power_vdd_gpu_soc_watts{device_type="jetson_orin",hostname="orin-01"} 8.5
+
+# Shelly metrics (external AC power)
+power_total_watts{device_type="jetson_orin",hostname="orin-01"} 45.3
+power_voltage_volts{device_type="jetson_orin",hostname="orin-01"} 220.5
+power_current_amps{device_type="jetson_orin",hostname="orin-01"} 0.205
+```
+
+**Prometheus Queries:**
+```promql
+# Total AC power consumption
+power_total_watts{hostname="orin-01"}
+
+# Compare internal vs external power
+jetson_power_vdd_gpu_soc_watts{hostname="orin-01"}  # GPU/SoC internal
+power_total_watts{hostname="orin-01"}                 # Total external
+
+# Power efficiency (internal/external ratio)
+sum(jetson_power_vdd_gpu_soc_watts{hostname="orin-01"}) / power_total_watts{hostname="orin-01"}
+```
+
+### Troubleshooting
+
+#### Shelly Plug Not Connecting
+
+**Check shelly_server logs:**
+```bash
+sudo journalctl -u shelly-server -f
+```
+
+**Verify network connectivity:**
+```bash
+# From edge device to Shelly plug
+ping 192.168.1.100
+
+# Check WebSocket port
+netstat -tlnp | grep 8765
+```
+
+**Reconfigure Shelly plug:**
+```bash
+# Reset WebSocket config
+curl "http://192.168.1.100/rpc/Ws.SetConfig" \
+  -d '{"config":{"enable":false}}'
+
+# Enable with correct server
+curl "http://192.168.1.100/rpc/Ws.SetConfig" \
+  -d '{"config":{"enable":true,"server":"ws://YOUR_DEVICE_IP:8765","ssl_ca":"*"}}'
+```
+
+#### No Shelly Metrics in Prometheus
+
+**Check ShellyCollector:**
+```bash
+# Exporter logs
+sudo journalctl -u edge-metrics-exporter -f | grep Shelly
+
+# Should see:
+# ✅ Shelly collector initialized
+# Shelly collector initialized
+#   Server URL: http://localhost:8766
+#   Device ID: orin-device-01
+```
+
+**Check shelly_server API:**
+```bash
+curl http://localhost:8766/devices
+curl http://localhost:8766/metrics/$(hostname)
+```
+
+**Check metrics config:**
+```bash
+curl http://localhost:9101/metrics/list | grep power_total_watts
+# Should show: "power_total_watts": true
+```
+
+**Enable Shelly metrics:**
+```bash
+curl -X POST http://localhost:9101/metrics/enable \
+  -H "Content-Type: application/json" \
+  -d '{"power_total_watts": true, "power_voltage_volts": true, "power_current_amps": true}'
+```
+
+#### Stale Metrics Warning
+
+If you see "Metrics are stale" in logs, the Shelly plug hasn't sent updates for >60 seconds.
+
+**Possible causes:**
+- Shelly plug lost power
+- Network connectivity issues
+- WebSocket connection dropped
+
+**Solution:**
+- Check Shelly plug power/network
+- Restart shelly_server: `sudo systemctl restart shelly-server`
+- Shelly plug will automatically reconnect
+
+### RPC Message Format
+
+For reference, Shelly Gen2+ sends JSON-RPC messages over WebSocket:
+
+**Initial Connection (NotifyFullStatus):**
+```json
+{
+  "src": "shellyplusplugus-XXXXX",
+  "method": "NotifyFullStatus",
+  "params": {
+    "switch:0": {
+      "id": 0,
+      "output": true,
+      "apower": 45.3,
+      "voltage": 220.5,
+      "current": 0.205,
+      "temperature": {"tC": 35.2}
+    }
+  }
+}
+```
+
+**Status Update (NotifyStatus):**
+```json
+{
+  "src": "shellyplusplugus-XXXXX",
+  "method": "NotifyStatus",
+  "params": {
+    "switch:0": {
+      "apower": 46.1,
+      "voltage": 220.7,
+      "current": 0.211
+    }
+  }
+}
+```
+
+### Multiple Collectors
+
+The exporter supports **multiple collectors simultaneously**. Example for Jetson Orin:
+
+**Active Collectors:**
+1. `JetsonOrinCollector` - Internal power (GPU, CPU, SoC)
+2. `ShellyCollector` - External AC power
+
+**Metrics Output:**
+```
+# Internal power metrics
+jetson_power_vdd_gpu_soc_watts 8.5
+jetson_power_vdd_cpu_cv_watts 3.2
+
+# External power metrics
+power_total_watts 45.3
+power_voltage_volts 220.5
+```
+
+This allows comprehensive power analysis:
+- Internal component power consumption
+- Total system power consumption
+- Power efficiency calculation
+- Overhead/losses identification
