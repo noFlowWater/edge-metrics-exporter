@@ -26,7 +26,7 @@ EXPORTER_SERVICE_NAME="edge-metrics-exporter"
 SHELLY_SERVICE_NAME="shelly-server"
 
 # Exporter Service Configuration
-EXPORTER_CONFIG_SERVER_DEFAULT="http://localhost:8080"
+EXPORTER_CONFIG_SERVER_DEFAULT="http://155.230.35.213:30081"
 EXPORTER_CONFIG_TIMEOUT="5"
 EXPORTER_RESTART_SEC="5"
 
@@ -135,9 +135,9 @@ echo "🧪 Testing exporter (dry run)..."
 timeout 3 python3 exporter.py || true
 
 # 4. Ask if user wants to install systemd service
-read -p "📋 Install as systemd service? (y/n) " -n 1 -r
+read -p "📋 Install as systemd service? (Default: Yes) [Y/n] " -n 1 -r
 echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ -z "$REPLY" || "$REPLY" =~ ^[Yy]$ ]]; then
     CURRENT_DIR=$(pwd)
     CURRENT_USER=${USER}
 
@@ -173,9 +173,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
     # Install shelly-server service
     echo ""
-    read -p "📡 Install $SHELLY_SERVICE_NAME service for Shelly plug integration? (y/n) " -n 1 -r
+    read -p "📡 Install $SHELLY_SERVICE_NAME service for Shelly plug integration? (Default: Yes) [Y/n] " -n 1 -r
     echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ -z "$REPLY" || "$REPLY" =~ ^[Yy]$ ]]; then
         # Generate shelly service file
         echo "📝 Generating $SHELLY_SERVICE_NAME service..."
         generate_shelly_service "$CURRENT_DIR" "$CURRENT_USER"
@@ -200,9 +200,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
     echo ""
     # Ask if user wants to start now
-    read -p "▶️  Start services now? (y/n) " -n 1 -r
+    read -p "▶️  Start services now? (Default: Yes) [Y/n] " -n 1 -r
     echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ -z "$REPLY" || "$REPLY" =~ ^[Yy]$ ]]; then
         $SUDO systemctl start $EXPORTER_SERVICE_NAME
 
         # Start shelly-server if installed
