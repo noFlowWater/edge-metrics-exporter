@@ -57,7 +57,7 @@ class OnDemandCollector:
 
         # Get config once
         with config_lock:
-            metrics_config = current_config.get("metrics", {})
+            metrics_config = current_config.get("metrics") or {}
             device_type = current_config.get("device_type", "unknown")
 
         try:
@@ -169,7 +169,7 @@ class MetricsConfigHandler(BaseHTTPRequestHandler):
         if self.path == '/metrics/list':
             try:
                 with config_lock:
-                    metrics_config = current_config.get("metrics", {})
+                    metrics_config = current_config.get("metrics") or {}
                     response = {
                         "metrics": metrics_config,
                         "device_type": current_config.get("device_type"),
@@ -224,7 +224,7 @@ class MetricsConfigHandler(BaseHTTPRequestHandler):
 
                 # Update metrics configuration
                 with config_lock:
-                    metrics_config = current_config.get("metrics", {})
+                    metrics_config = current_config.get("metrics") or {}
 
                     invalid_metrics = []
                     updated_count = 0
