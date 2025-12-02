@@ -12,25 +12,45 @@ else
     SUDO="sudo"
 fi
 
+# ============================================
+# Configuration Constants
+# ============================================
+
+# System Paths
+SYSTEMD_DIR="/etc/systemd/system"
+SUDOERS_DIR="/etc/sudoers.d"
+
+# Service Names
+EXPORTER_SERVICE_NAME="edge-metrics-exporter"
+SHELLY_SERVICE_NAME="shelly-server"
+
+# Ports (for verification display)
+SHELLY_WS_PORT="8765"
+SHELLY_HTTP_PORT="8766"
+
+# ============================================
+# Uninstallation Logic
+# ============================================
+
 # 1. Check if systemd service exists
-if [ -f "/etc/systemd/system/edge-metrics-exporter.service" ]; then
+if [ -f "$SYSTEMD_DIR/$EXPORTER_SERVICE_NAME.service" ]; then
     echo "📋 Found systemd service"
 
     # Stop service if running
-    if systemctl is-active --quiet edge-metrics-exporter; then
-        echo "⏹️  Stopping edge-metrics-exporter service..."
-        $SUDO systemctl stop edge-metrics-exporter
+    if systemctl is-active --quiet $EXPORTER_SERVICE_NAME; then
+        echo "⏹️  Stopping $EXPORTER_SERVICE_NAME service..."
+        $SUDO systemctl stop $EXPORTER_SERVICE_NAME
     fi
 
     # Disable service
-    if systemctl is-enabled --quiet edge-metrics-exporter 2>/dev/null; then
-        echo "🔓 Disabling edge-metrics-exporter service..."
-        $SUDO systemctl disable edge-metrics-exporter
+    if systemctl is-enabled --quiet $EXPORTER_SERVICE_NAME 2>/dev/null; then
+        echo "🔓 Disabling $EXPORTER_SERVICE_NAME service..."
+        $SUDO systemctl disable $EXPORTER_SERVICE_NAME
     fi
 
     # Remove service file
     echo "🗑️  Removing systemd service file..."
-    $SUDO rm -f /etc/systemd/system/edge-metrics-exporter.service
+    $SUDO rm -f "$SYSTEMD_DIR/$EXPORTER_SERVICE_NAME.service"
 
     # Reload systemd
     echo "🔄 Reloading systemd daemon..."
@@ -44,7 +64,7 @@ fi
 
 # 2. Remove sudoers configuration for tegrastats
 CURRENT_USER=${USER}
-SUDOERS_FILE="/etc/sudoers.d/tegrastats-${CURRENT_USER}"
+SUDOERS_FILE="$SUDOERS_DIR/tegrastats-${CURRENT_USER}"
 if [ -f "$SUDOERS_FILE" ]; then
     echo "🔑 Removing sudoers configuration for tegrastats..."
     $SUDO rm -f "$SUDOERS_FILE"
@@ -54,33 +74,33 @@ else
 fi
 
 # 3. Remove shelly-server service if exists
-if [ -f "/etc/systemd/system/shelly-server.service" ]; then
-    echo "📋 Found shelly-server service"
+if [ -f "$SYSTEMD_DIR/$SHELLY_SERVICE_NAME.service" ]; then
+    echo "📋 Found $SHELLY_SERVICE_NAME service"
 
     # Stop service if running
-    if systemctl is-active --quiet shelly-server; then
-        echo "⏹️  Stopping shelly-server service..."
-        $SUDO systemctl stop shelly-server
+    if systemctl is-active --quiet $SHELLY_SERVICE_NAME; then
+        echo "⏹️  Stopping $SHELLY_SERVICE_NAME service..."
+        $SUDO systemctl stop $SHELLY_SERVICE_NAME
     fi
 
     # Disable service
-    if systemctl is-enabled --quiet shelly-server 2>/dev/null; then
-        echo "🔓 Disabling shelly-server service..."
-        $SUDO systemctl disable shelly-server
+    if systemctl is-enabled --quiet $SHELLY_SERVICE_NAME 2>/dev/null; then
+        echo "🔓 Disabling $SHELLY_SERVICE_NAME service..."
+        $SUDO systemctl disable $SHELLY_SERVICE_NAME
     fi
 
     # Remove service file
-    echo "🗑️  Removing shelly-server service file..."
-    $SUDO rm -f /etc/systemd/system/shelly-server.service
+    echo "🗑️  Removing $SHELLY_SERVICE_NAME service file..."
+    $SUDO rm -f "$SYSTEMD_DIR/$SHELLY_SERVICE_NAME.service"
 
     # Reload systemd
     echo "🔄 Reloading systemd daemon..."
     $SUDO systemctl daemon-reload
     $SUDO systemctl reset-failed 2>/dev/null || true
 
-    echo "✅ Shelly server service uninstalled"
+    echo "✅ $SHELLY_SERVICE_NAME service uninstalled"
 else
-    echo "ℹ️  No shelly-server service found"
+    echo "ℹ️  No $SHELLY_SERVICE_NAME service found"
 fi
 
 # 4. Kill any running processes
@@ -104,13 +124,11 @@ if [ -f "$CURRENT_DIR/config.yaml" ]; then
 fi
 METRICS_PORT=${METRICS_PORT:-9102}
 RELOAD_PORT=${RELOAD_PORT:-9101}
-SHELLY_WS_PORT=${SHELLY_WS_PORT:-8765}
-SHELLY_HTTP_PORT=${SHELLY_HTTP_PORT:-8766}
 
 echo ""
 echo "🔍 Verification:"
-echo "  - Service status: systemctl status edge-metrics-exporter (should show 'not found')"
-echo "  - Service status: systemctl status shelly-server (should show 'not found')"
+echo "  - Service status: systemctl status $EXPORTER_SERVICE_NAME (should show 'not found')"
+echo "  - Service status: systemctl status $SHELLY_SERVICE_NAME (should show 'not found')"
 echo "  - Port check: netstat -tlnp | grep $METRICS_PORT (should be empty)"
 echo "  - Port check: netstat -tlnp | grep $SHELLY_WS_PORT (should be empty)"
 echo "  - Process check: ps aux | grep exporter.py (should be empty)"
