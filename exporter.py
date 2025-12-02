@@ -323,7 +323,7 @@ class CombinedHandler(BaseHTTPRequestHandler):
             with config_lock:
                 device_id = socket.gethostname()
                 device_type = current_config.get("device_type", "unknown")
-                metrics_config = current_config.get("metrics", {})
+                metrics_config = current_config.get("metrics") or {}
 
             # Calculate uptime
             uptime_seconds = 0
@@ -498,8 +498,8 @@ def apply_new_config(new_config: dict):
             return
 
     # Log metrics config changes
-    old_metrics = current_config.get("metrics", {})
-    new_metrics = new_config.get("metrics", {})
+    old_metrics = current_config.get("metrics") or {}
+    new_metrics = new_config.get("metrics") or {}
 
     old_enabled = {k for k, v in old_metrics.items() if v}
     new_enabled = {k for k, v in new_metrics.items() if v}
